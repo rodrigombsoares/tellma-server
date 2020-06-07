@@ -1,20 +1,13 @@
 package com.tellma.websocket;
 
 import java.io.IOException;
-import java.io.StringReader;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.Iterator;
-import java.util.Map.Entry;
 
-import javax.json.Json;
-import javax.json.JsonObject;
-import javax.json.JsonObjectBuilder;
-import javax.json.JsonReader;
-import javax.json.JsonValue;
 import javax.websocket.OnClose;
 import javax.websocket.OnError;
 import javax.websocket.OnMessage;
@@ -22,6 +15,15 @@ import javax.websocket.OnOpen;
 import javax.websocket.Session;
 import javax.websocket.server.PathParam;
 import javax.websocket.server.ServerEndpoint;
+
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 
 @ServerEndpoint("/{roomId}")
@@ -48,17 +50,18 @@ public class Server {
 		}
 	}
 	@OnMessage
-	public void handleMessage(@PathParam("roomId") int roomId, String message, Session userSession) throws IOException{
+	public void handleMessage(@PathParam("roomId") int chatId, String message, Session userSession) throws Throwable{
+		
 		// Get all users inside the room
-		Set<Session> roomUsers = rooms.get(roomId);
+		Set<Session> roomUsers = rooms.get(chatId);
 		Iterator<Session> iterator = roomUsers.iterator();
-		// Convert message to JSON and insert datetime value
-		JsonReader jsonReader = Json.createReader(new StringReader(message));
-	    JsonObject response = jsonReader.readObject();
-	    Date today = new Date();
-	    response = jsonObjectToBuilder(response).add("datetime", today.toString()).build();
+
+		JSONObject jsonMessage = new JSONObject(message.replaceAll("\r?\n", ""));
+		// Post message to database
+		String response = postMessage(jsonMessage, chatId);
 	    // Send response to all participants
-		while (iterator.hasNext()) iterator.next().getBasicRemote().sendText(response.toString());
+		while (iterator.hasNext())
+			iterator.next().getBasicRemote().sendText(response);
 	}
 	@OnClose
 	public void handleClose(@PathParam("roomId") int roomId, Session userSession) {
@@ -78,13 +81,21 @@ public class Server {
 		t.printStackTrace();
 	}
 	
-	private JsonObjectBuilder jsonObjectToBuilder(JsonObject jo) {
-	    JsonObjectBuilder job = Json.createObjectBuilder();
-
-	    for (Entry<String, JsonValue> entry : jo.entrySet()) {
-	        job.add(entry.getKey(), entry.getValue());
-	    }
-
-	    return job;
+	private String postMessage(JSONObject jsonMessage, int chatId) throws IOException, JSONException {
+		CloseableHttpClient client = HttpClients.createDefault();
+	    HttpPost httpPost = new HttpPost("http://34.71.71.141/apirest/messages");
+	    String text = jsonMessage.getString("text");
+	    String userId = jsonMessage.getString("userId");
+	    
+	    String json = "{\"text\": \""+text+"\",\"chatId\": "+chatId+",\"userId\": "+userId+"}";
+	    StringEntity entity = new StringEntity(json);
+	    httpPost.setEntity(entity);
+	    httpPost.setHeader("Accept", "application/json");
+	    httpPost.setHeader("Content-type", "application/json");
+	 
+	    CloseableHttpResponse response = client.execute(httpPost);
+	    String responseBody = EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
+	    client.close();
+	    return responseBody;
 	}
 }
